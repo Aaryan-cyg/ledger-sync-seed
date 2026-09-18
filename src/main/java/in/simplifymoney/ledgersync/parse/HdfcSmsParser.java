@@ -37,6 +37,11 @@ public final class HdfcSmsParser implements MessageParser {
             "spent on HDFC Bank Card x(?<acct>\\d{4}) at (?<merchant>.+?) "
                     + "on (?<when>\\d{2}-\\d{2}-\\d{2} \\d{2}:\\d{2})\\.");
 
+    private static final Pattern EMANDATE = Pattern.compile(
+            "E-mandate! .*? will be deducted from your HDFC Bank A/c XX(?<acct>\\d{4}) "
+                    + "on (?<when>\\d{2}-\\d{2}-\\d{2} at \\d{2}:\\d{2}) "
+                    + "for (?<merchant>[^.]+)\\.");
+
     @Override
     public boolean supports(RawMessage m) {
         return "sms".equals(m.channel()) && SENDER.equals(m.sender());
@@ -63,8 +68,17 @@ public final class HdfcSmsParser implements MessageParser {
 
         Matcher card = CARD.matcher(body);
         if (card.find()) {
-            return build(m, card.group("acct"), card.group("when"),
-                    Direction.DEBIT, card.group("merchant"));
+            BigDecimal amount = Amounts.first(m.body());
+            OffsetDateTime at = Dates.ist(card.group("when"));
+            if (amount == null || at == null) return Optional.empty();
+            return Optional.of(new ParsedTxn(card.group("acct"), at,
+                    Direction.DEBIT, amount, card.group("merchant").trim(), null, m.messageId()));
+        }
+
+        Matcher em = EMANDATE.matcher(body);
+        if (em.find()) {
+            return build(m, em.group("acct"), em.group("when").replace(" at ", " "),
+                    Direction.DEBIT, em.group("merchant"));
         }
 
         return Optional.empty();

@@ -35,4 +35,14 @@ public final class Dates {
         }
         return null;
     }
+
+    /** Parse an RFC 1123 email date and convert to IST, truncated to minute. */
+    public static OffsetDateTime emailDate(String dateStr) {
+        try {
+            OffsetDateTime dt = OffsetDateTime.parse(dateStr.trim(), DateTimeFormatter.RFC_1123_DATE_TIME);
+            return dt.withOffsetSameInstant(IST).withSecond(0).withNano(0);
+        } catch (DateTimeParseException e) {
+            return null;
+        }
+    }
 }

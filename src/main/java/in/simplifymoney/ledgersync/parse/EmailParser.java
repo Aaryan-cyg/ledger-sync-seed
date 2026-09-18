@@ -1,14 +1,29 @@
 package in.simplifymoney.ledgersync.parse;
 
+import in.simplifymoney.ledgersync.model.Direction;
 import in.simplifymoney.ledgersync.model.RawMessage;
+import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Bank transaction alert emails.
  *
- * Not written yet. The corpus contains them and they are currently all dropped.
+ * Reads transaction alerts from HDFC and ICICI banks containing date,
+ * account ending digits, debit/credit direction, amount, and merchant.
  */
 public final class EmailParser implements MessageParser {
+
+    private static final Pattern PATTERN = Pattern.compile(
+            "Date:\\s*(?<date>.+?)\\n"
+                    + "Subject:.*?\\n\\n"
+                    + "Dear Customer,\\s*\\n\\n"
+                    + "Your account ending (?<acct>\\d{4}) has been (?<dir>debited|credited) with .*?\\.\\n"
+                    + "Merchant / Remarks:\\s*(?<merchant>.+?)\\n"
+                    + "Transaction reference:\\s*(?<ref>.+?)(?:\\n|$)",
+            Pattern.DOTALL);
 
     @Override
     public boolean supports(RawMessage m) {
@@ -17,6 +32,17 @@ public final class EmailParser implements MessageParser {
 
     @Override
     public Optional<ParsedTxn> parse(RawMessage m) {
-        throw new UnsupportedOperationException("email parsing is not implemented");
+        Matcher matcher = PATTERN.matcher(m.body());
+        if (!matcher.find()) return Optional.empty();
+
+        String acct = matcher.group("acct");
+        Direction dir = "debited".equals(matcher.group("dir")) ? Direction.DEBIT : Direction.CREDIT;
+        BigDecimal amount = Amounts.first(m.body());
+        OffsetDateTime occurredAt = Dates.emailDate(matcher.group("date"));
+        if (amount == null || occurredAt == null) return Optional.empty();
+
+        String merchant = matcher.group("merchant").trim();
+        return Optional.of(new ParsedTxn(acct, occurredAt, dir, amount, merchant, null, m.messageId()));
     }
 }
+
