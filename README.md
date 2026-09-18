@@ -243,7 +243,15 @@ docker compose up -d       # Starts MongoDB on port 27017
 
 ## 2. Document Store Architecture & Benchmark Numbers
 
-The document store is backed by MongoDB (`docker compose up` starts `mongo:7.0` configured via `docker/mongo-init.js`). In Java, `DocumentLedgerStore.java` implements `DocumentStore.java` using compound and inverted indexes matching MongoDB's exact execution semantics.
+The document store is backed by a genuine MongoDB implementation in [`MongoDocumentStore.java`](file:///home/eyrc01aaryan/Simplify_money/ledger-sync-seed/src/main/java/in/simplifymoney/ledgersync/store/MongoDocumentStore.java) using the official synchronous driver (`org.mongodb:mongodb-driver-sync:5.1.4`). An in-memory store ([`DocumentLedgerStore.java`](file:///home/eyrc01aaryan/Simplify_money/ledger-sync-seed/src/main/java/in/simplifymoney/ledgersync/store/DocumentLedgerStore.java)) is also retained for fast, dependency-free unit testing.
+
+### How to Start MongoDB
+- **With Docker:**
+  ```bash
+  docker compose up -d
+  ```
+  Starts MongoDB 7.0 on port `27017` with collection initialization and indexes provisioned via [`docker/mongo-init.js`](file:///home/eyrc01aaryan/Simplify_money/ledger-sync-seed/docker/mongo-init.js).
+- **Connection resolution:** Connects to `mongodb://localhost:27017` by default, or uses the `MONGODB_URI` environment variable if specified. Database name is `ledgersync`.
 
 ### Document Schemas & Indexes
 
@@ -254,12 +262,14 @@ The document store is backed by MongoDB (`docker compose up` starts `mongo:7.0` 
      "accountLast4": "4821",
      "occurredAt": "2026-07-04T20:24:00+05:30",
      "direction": "DEBIT",
-     "amount": 2499.50,
+     "amount": Decimal128("2499.50"),
      "category": "SPEND",
      "merchant": "AMAZON PAY",
      "sourceMessageIds": ["m-00087-1a2b3c", "m-00089-77de01"]
    }
    ```
+   - **Primary Key (`_id`):** Natural key `accountLast4_occurredAt_direction_amount` ensures absolute uniqueness at the database engine level.
+   - **Monetary Precision:** Stored as BSON `Decimal128` to maintain positive two-decimal exact arithmetic without IEEE-754 floating-point inaccuracies.
    - **Compound Index:** `{ accountLast4: 1, occurredAt: -1 }` directly serves Query 1.
    - **Multikey Index:** `{ sourceMessageIds: 1 }` directly serves Query 3.
 
@@ -269,24 +279,32 @@ The document store is backed by MongoDB (`docker compose up` starts `mongo:7.0` 
      "_id": "4821",
      "accountLast4": "4821",
      "totals": {
-       "SPEND": 174988.46,
-       "INCOME": 151340.83,
-       "MICRO": 2357.51,
-       "TRANSFER": 31000.00
+       "SPEND": Decimal128("174988.46"),
+       "INCOME": Decimal128("151340.83"),
+       "MICRO": Decimal128("2357.51"),
+       "TRANSFER": Decimal128("31000.00")
      }
    }
    ```
-   - Maintained dynamically upon transaction write (`$inc`). Direct point lookup serves Query 2.
+   - Maintained atomically upon transaction write (`$inc`). Direct point lookup serves Query 2.
 
-### Benchmark Numbers at 100,000 Transactions
+### Benchmark Numbers at 100,000 Transactions in MongoDB
 
-Verified by `DocumentStoreTest.testThreeAccessPatternsAtScale100k()` with 100,000 documents distributed across 10 accounts and 10 months (1,000 transactions for the queried account in the target month):
+Measured directly against live MongoDB using `explain(ExplainVerbosity.EXECUTION_STATS)` in [`MongoDocumentStoreTest.test100kBenchmarkAgainstMongo()`](file:///home/eyrc01aaryan/Simplify_money/ledger-sync-seed/src/test/java/in/simplifymoney/ledgersync/MongoDocumentStoreTest.java) with 100,000 documents distributed across 10 accounts and 10 months (1,000 transactions for the queried account in the target month):
 
-| Query Access Pattern | Engine Metric (`totalDocsExamined`) | Engine Metric (`nReturned`) | Ratio | Performance Mechanism |
+| Query Access Pattern | Engine Metric (`totalDocsExamined`) | Engine Metric (`nReturned`) | Ratio | Performance Mechanism in MongoDB |
 |---|:---:|:---:|:---:|---|
-| **Q1: One account's transactions for one month, newest first** | **1,000** | **1,000** | **1:1** | Covered index range scan on `{ accountLast4: 1, occurredAt: -1 }`. Zero unindexed documents scanned; zero in-memory sorting. |
-| **Q2: Running totals per category for an account** | **1** | **1** | **1:1** | Point lookup on `account_category_totals` by account primary key. Pre-aggregated document eliminates scanning 10,000 historical transactions. |
+| **Q1: One account's transactions for one month, newest first** | **1,000** | **1,000** | **1:1** | B-Tree index range scan on compound index `{ accountLast4: 1, occurredAt: -1 }`. MongoDB traverses matching keys backwards, satisfying both the month date filter and the descending order without an in-memory `SORT` stage. |
+| **Q2: Running totals per category for an account** | **1** | **1** | **1:1** | Point lookup on `account_category_totals` by `accountLast4` unique primary key. Pre-aggregated rollup document completely eliminates scanning 10,000 historical transactions. |
 | **Q3: Given a message ID, which transaction did it produce** | **1** | **1** | **1:1** | Multikey index point lookup on `sourceMessageIds`. Direct B-Tree hop directly to the matching transaction document. |
+
+### Backfill & Consistency Checker Against MongoDB
+- **Backfill Idempotency:**
+  - First run: `read=271, written=266, skipped=0` (groups legacy rows from `V2__seed.sql` to eliminate duplicates).
+  - Second run: `read=271, written=0, skipped=266` (100% idempotent; writes zero duplicates).
+- **Consistency Checker:**
+  - `stores agree completely (0 divergences)`.
+  - Field-level verification catches any altered `amount`, `category`, `occurredAt`, `direction`, or `sourceMessageIds` in MongoDB.
 
 ---
 

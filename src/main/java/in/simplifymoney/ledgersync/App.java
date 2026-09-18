@@ -62,27 +62,24 @@ public final class App {
                 }
             }
             case "backfill" -> {
-                try (SqlLedgerStore store = new SqlLedgerStore(DB)) {
+                try (SqlLedgerStore store = new SqlLedgerStore(DB);
+                     in.simplifymoney.ledgersync.store.MongoDocumentStore mongoStore =
+                             new in.simplifymoney.ledgersync.store.MongoDocumentStore()) {
                     store.migrate(MIGRATIONS);
-                    in.simplifymoney.ledgersync.store.DocumentLedgerStore docStore = new in.simplifymoney.ledgersync.store.DocumentLedgerStore();
-                    docStore.loadFromFile(DOCS);
-                    in.simplifymoney.ledgersync.store.Backfill backfill = new in.simplifymoney.ledgersync.store.Backfill(store, docStore);
+                    in.simplifymoney.ledgersync.store.Backfill backfill =
+                            new in.simplifymoney.ledgersync.store.Backfill(store, mongoStore);
                     in.simplifymoney.ledgersync.store.Backfill.Result result = backfill.run();
-                    docStore.saveToFile(DOCS);
                     System.out.println("backfill: read=" + result.read() + ", written=" + result.written() + ", skipped=" + result.skipped());
-                    System.out.println("total document store records: " + docStore.totalDocuments());
+                    System.out.println("total document store records in MongoDB: " + mongoStore.totalDocuments());
                 }
             }
             case "check" -> {
-                try (SqlLedgerStore store = new SqlLedgerStore(DB)) {
+                try (SqlLedgerStore store = new SqlLedgerStore(DB);
+                     in.simplifymoney.ledgersync.store.MongoDocumentStore mongoStore =
+                             new in.simplifymoney.ledgersync.store.MongoDocumentStore()) {
                     store.migrate(MIGRATIONS);
-                    in.simplifymoney.ledgersync.store.DocumentLedgerStore docStore = new in.simplifymoney.ledgersync.store.DocumentLedgerStore();
-                    if (Files.exists(DOCS)) {
-                        docStore.loadFromFile(DOCS);
-                    } else {
-                        new in.simplifymoney.ledgersync.store.Backfill(store, docStore).run();
-                    }
-                    in.simplifymoney.ledgersync.store.ConsistencyChecker checker = new in.simplifymoney.ledgersync.store.ConsistencyChecker(store, docStore);
+                    in.simplifymoney.ledgersync.store.ConsistencyChecker checker =
+                            new in.simplifymoney.ledgersync.store.ConsistencyChecker(store, mongoStore);
                     var divergences = checker.check();
                     if (divergences.isEmpty()) {
                         System.out.println("stores agree completely (0 divergences)");

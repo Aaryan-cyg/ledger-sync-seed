@@ -6,8 +6,16 @@ cd "$(dirname "$0")"
 
 echo "==> compiling"
 rm -rf build/selfcheck && mkdir -p build/selfcheck
-javac -d build/selfcheck $(find src/main/java -name '*.java')
-
-echo
-echo "==> running"
-java -cp build/selfcheck in.simplifymoney.ledgersync.SelfCheck "$@"
+# Build classpath from Gradle cache if present
+CP=$(find "${HOME}/.gradle/caches" -name "*.jar" 2>/dev/null | tr '\n' ':' || true)
+if [ -n "$CP" ]; then
+    javac -cp "$CP" -d build/selfcheck $(find src/main/java -name '*.java')
+    echo
+    echo "==> running"
+    java -cp "build/selfcheck:$CP" in.simplifymoney.ledgersync.SelfCheck "$@"
+else
+    javac -d build/selfcheck $(find src/main/java -name '*.java' ! -name 'Mongo*')
+    echo
+    echo "==> running"
+    java -cp build/selfcheck in.simplifymoney.ledgersync.SelfCheck "$@"
+fi
