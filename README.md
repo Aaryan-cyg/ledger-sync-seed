@@ -509,3 +509,80 @@ I separated successful transaction normalization from reconciliation. A transact
 What I would do with more time:
 I would add more checkpoint-based reconciliation tests covering missing messages, duplicate messages, and out-of-order messages.
 
+
+
+## Document Store Design
+
+I chose MongoDB as the document store. The main reason was that it was simple to run locally with Docker and gave me a straightforward way to model the ledger around the three query patterns required by the assignment.
+
+### Transaction Document
+
+Each transaction is stored as a document containing the normalized transaction fields:
+
+- `accountLast4`
+- `occurredAt`
+- `direction`
+- `amount`
+- `category`
+- `merchant`
+- `sourceMessageIds`
+
+I use a deterministic transaction identity so that saving the same transaction again does not create another document.
+
+### Query 1 — Account transactions for one month
+
+Required query:
+
+> Get one account's transactions for one month, newest first.
+
+I use the account and transaction time together for this access pattern and index the collection accordingly. This allows MongoDB to retrieve the relevant account/month range in descending transaction-time order instead of scanning unrelated transactions.
+
+### Query 2 — Running totals per category
+
+Required query:
+
+> Get running totals per category for an account.
+
+I maintain account-level category totals in the document store so this query can be answered directly without scanning every transaction for the account.
+
+### Query 3 — Message ID to transaction
+
+Required query:
+
+> Given a message ID, find which transaction it produced.
+
+The transaction stores its source message IDs, and I created an index on `sourceMessageIds`. This allows the system to trace a message back to its normalized transaction.
+
+### 100,000 Transaction Benchmark
+
+The following measurements were collected from MongoDB using `explain("executionStats")` with 100,000 transactions:
+
+| Query | totalDocsExamined | nReturned |
+|---|---:|---:|
+| Account + month, newest first | 1000 | 1000 |
+| Category totals for account | 1 | 1 |
+| Message ID → transaction | 1 | 1 |
+
+The first query examines 1,000 documents because the requested account/month contains 1,000 transactions. The other two queries are point-style lookups and return one result while examining one document.
+
+
+## Backfill
+
+The backfill moves the existing SQL transactions into MongoDB.
+
+I made the operation idempotent because the assignment states that the SQL store does not have a uniqueness guarantee and that backfill may be executed multiple times, including after a partial failure.
+
+I verified this by running the backfill twice:
+
+- First run: 271 records read, 266 written, 0 skipped.
+- Second run: 271 records read, 0 written, 266 skipped.
+
+The total number of documents remained unchanged after the second run, so rerunning the backfill did not create duplicates.
+
+## Consistency Checker
+
+The ConsistencyChecker compares the actual transaction contents between the SQL store and MongoDB instead of comparing only the number of records.
+
+This is important because both stores could contain the same number of transactions while one transaction has different data.
+
+After the backfill, I ran the consistency check and the two stores agreed with zero divergences.
