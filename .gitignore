@@ -7,3 +7,4 @@ submission/
 .idea/
 *.iml
 .DS_Store
+*.class
