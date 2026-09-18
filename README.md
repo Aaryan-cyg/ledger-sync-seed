@@ -412,3 +412,100 @@ Measured directly against live MongoDB using `explain(ExplainVerbosity.EXECUTION
 2. **Transactional Outbox & Change Data Capture (CDC):** Use Debezium on MongoDB replica set change streams to update Elasticsearch / read replicas asynchronously.
 3. **Distributed Lock for Transfer Pairing:** For high-throughput concurrent streams, use Redis/Redlock to lock account pairs when reconciling cross-account transfer legs.
 4. **LLM/NLP Fallback Parser:** Deploy a lightweight local LLM (e.g. Gemma-2B) fallback parser for unrecognized bank SMS templates that fail regex extraction.
+
+
+
+
+## What the Data Made Me Decide
+
+### 1. A message is evidence, not necessarily a transaction
+
+What I saw:
+The corpus contains multiple messages that can refer to the same underlying transaction. The `message_id` is associated with the uploaded message, so it cannot safely be treated as the transaction's unique identity.
+
+What I chose:
+I treated messages as evidence for normalized transactions and retained all relevant message IDs in `source_message_ids`.
+
+What I would do with more time:
+I would test the deduplication logic against a larger set of deliberately reordered, duplicated, and partially overlapping messages.
+
+---
+
+### 2. Debit and credit direction is not enough for categorization
+
+What I saw:
+The corpus contains different types of financial activity, including normal spending, income, small UPI debits, and transfers between accounts. Simply treating every debit as spending and every credit as income would therefore give incorrect summaries.
+
+What I chose:
+I used the transaction context along with direction and amount to distinguish `SPEND`, `INCOME`, `MICRO`, and `TRANSFER`.
+
+What I would do with more time:
+I would expand the test corpus around ambiguous merchant descriptions and more variations of own-account transfers.
+
+---
+
+### 3. Transaction time should come from the bank event
+
+What I saw:
+The uploaded message has a `received_at` timestamp, while the bank message can contain the actual transaction time. These two times do not necessarily represent the same event time.
+
+What I chose:
+I used the bank-reported transaction time for `occurred_at` and kept the message arrival time separate.
+
+What I would do with more time:
+I would add more tests for delayed messages, messages received out of order, and transactions crossing midnight.
+
+---
+
+### 4. The corpus did not support inventing the missing ₹7,500 transaction
+
+What I saw:
+For account `4821`, the ledger could not explain a ₹7,500 difference between the available balance checkpoints. I searched the supplied corpus for evidence of a ₹7,500 transaction and could not find a source notification for it.
+
+What I chose:
+I kept the ledger evidence-based and recorded the ₹7,500 difference as a reconciliation discrepancy instead of creating an unsupported transaction.
+
+What I would do with more time:
+I would investigate the upstream source or obtain the missing bank notification/account statement to determine the exact transaction responsible for the difference.
+
+---
+
+### 5. Small transactions should remain traceable
+
+What I saw:
+The corpus contains many UPI debits of ₹100 or less. These are still real spending events, even though the specification asks for them to be rolled up in the account summary.
+
+What I chose:
+I kept each `MICRO` transaction in `ledger.json` and aggregated only its count and total in `summary.json`.
+
+What I would do with more time:
+I would test the reporting behavior with larger numbers of micro transactions and verify that their treatment remains consistent across accounts.
+
+---
+
+### 6. The document store should follow actual access patterns
+
+What I saw:
+The assignment specifies only three document-store queries: account/month transactions, category totals for an account, and finding the transaction produced by a message ID.
+
+What I chose:
+I designed the MongoDB storage and indexes around these access patterns instead of trying to reproduce the SQL schema directly.
+
+The benchmark also gave me a way to verify that the queries were actually using the intended indexes rather than scanning the complete dataset.
+
+What I would do with more time:
+I would test the same design with more realistic production-scale distributions, including accounts with very different transaction volumes.
+
+---
+
+### 7. Reconciliation data is useful even when the ledger cannot fully reconcile
+
+What I saw:
+The corpus could be parsed into a ledger, but one balance difference could not be explained from the available source messages.
+
+What I chose:
+I separated successful transaction normalization from reconciliation. A transaction is only added when there is evidence for it, while unexplained balance differences are reported separately.
+
+What I would do with more time:
+I would add more checkpoint-based reconciliation tests covering missing messages, duplicate messages, and out-of-order messages.
+
