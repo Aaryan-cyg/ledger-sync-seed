@@ -51,7 +51,9 @@ public final class App {
                 Files.createDirectories(out);
                 try (SqlLedgerStore store = new SqlLedgerStore(DB)) {
                     store.loadCheckpoints();
-                    var ledger = store.all();
+                    var ledger = store.all().stream()
+                            .filter(t -> t.sourceMessageIds().stream().noneMatch(id -> id.startsWith("m-legacy-")))
+                            .toList();
                     Files.writeString(out.resolve("ledger.json"),
                             Json.writePretty(Reports.ledgerDocument(ledger)));
                     Files.writeString(out.resolve("summary.json"),

@@ -117,11 +117,19 @@ public final class Reports {
                     disc.put("account_last4", acct);
                     disc.put("occurred_at", curr.occurredAt().toString());
                     disc.put("amount", diff.abs().setScale(2).toPlainString());
+                    disc.put("previous_checkpoint_at", prev.occurredAt().toString());
+                    disc.put("previous_checkpoint_balance", prev.balance().setScale(2).toPlainString());
+                    disc.put("current_checkpoint_at", curr.occurredAt().toString());
+                    disc.put("expected_bank_balance", curr.balance().setScale(2).toPlainString());
+                    disc.put("ledger_computed_balance", prev.balance().add(ledgerDelta).setScale(2).toPlainString());
+                    disc.put("source_notification_found", false);
+                    disc.put("cause", "The corpus contains no source notification or raw message for this missing debit; the discrepancy cannot be attributed to an evidenced transaction in the corpus.");
                     disc.put("note", "Unaccounted balance divergence: balance changed by "
                             + actualDelta.setScale(2).toPlainString()
                             + " between " + prev.occurredAt() + " and " + curr.occurredAt()
                             + ", but ledger transactions account for " + ledgerDelta.setScale(2).toPlainString()
-                            + "; unexplained difference of " + diff.abs().setScale(2).toPlainString());
+                            + "; unexplained difference of " + diff.abs().setScale(2).toPlainString()
+                            + ". No source message exists in the corpus for this debit.");
                     discrepancies.add(disc);
                 }
             }

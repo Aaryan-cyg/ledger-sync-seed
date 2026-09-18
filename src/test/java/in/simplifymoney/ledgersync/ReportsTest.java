@@ -61,8 +61,15 @@ class ReportsTest {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> discrepancies = (List<Map<String, Object>>) rec.get("discrepancies");
         assertEquals(1, discrepancies.size());
-        assertEquals("4821", discrepancies.get(0).get("account_last4"));
-        assertEquals("7500.00", discrepancies.get(0).get("amount"));
-        assertTrue(((String) discrepancies.get(0).get("note")).contains("Unaccounted balance divergence"));
+        Map<String, Object> disc4821 = discrepancies.get(0);
+        assertEquals("4821", disc4821.get("account_last4"));
+        assertEquals("7500.00", disc4821.get("amount"));
+        assertEquals("2026-07-29T11:53+05:30", disc4821.get("previous_checkpoint_at"));
+        assertEquals("36054.05", disc4821.get("previous_checkpoint_balance"));
+        assertEquals("2026-07-29T17:06+05:30", disc4821.get("current_checkpoint_at"));
+        assertEquals("28479.05", disc4821.get("expected_bank_balance"));
+        assertEquals("35979.05", disc4821.get("ledger_computed_balance"));
+        assertEquals(false, disc4821.get("source_notification_found"));
+        assertTrue(((String) disc4821.get("note")).contains("Unaccounted balance divergence"));
     }
 }

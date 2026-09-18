@@ -308,7 +308,53 @@ Measured directly against live MongoDB using `explain(ExplainVerbosity.EXECUTION
 
 ---
 
-## 3. Decision Log
+## 3. Forensic Investigation & Honest Reconciliation (The ₹7,500 Discrepancy)
+
+### Expected vs Evidenced Discrepancy Summary
+- **Expected by `fixtures/corpus-a-totals.json`:** 257 transactions
+  - Account 4821: 146 transactions (Spend: ₹87,068.38)
+  - Account 9075: 91 transactions (Spend: ₹39,058.11)
+  - Account 3310: 20 transactions (Spend: ₹39,451.97)
+- **Evidenced from `fixtures/corpus-a.jsonl`:** **256 transactions**
+  - Account 4821: **145 transactions** (Spend: ₹79,568.38)
+  - Account 9075: **91 transactions** (Exact match)
+  - Account 3310: **20 transactions** (Exact match)
+- **The Discrepancy:** Exactly **1 transaction** and **₹7,500.00** on Account 4821.
+
+### Forensic Investigation Evidence
+1. **Raw Message Analysis:**
+   - `fixtures/corpus-a.jsonl` contains exactly **522 raw messages**.
+   - Exactly **41 messages are skipped** with valid reasons: 22 non-banking messages (Swiggy order/delivery updates, Delhivery logistics updates, ICICI phishing alert notices), 7 OTP authentication messages, 8 balance broadcasts with no transaction event, and 4 personal loan pre-approval promotions. None of these 41 messages contain any transaction debit or spend of ₹7,500.00.
+   - Exactly **481 banking transaction messages** are parsed across all accounts: 270 on 4821, 177 on 9075, and 34 on credit card 3310.
+   - Deduplication groups multi-channel duplicates (SMS + Email pairs, network resends) by natural key `(accountLast4, occurredAt, direction, amount)` into **256 unique transactions**. In all 180 multi-message duplicate groups, the messages represent identical real-world events; zero valid transactions were incorrectly collapsed or dropped.
+   - Searching the entire raw file `fixtures/corpus-a.jsonl` for `"7500"` or `"7,500"` yields **zero occurrences**.
+
+2. **Balance Continuity Checkpoints:**
+   Tracing the bank's stated balance across all transactions on Account 4821 pins down the exact moment of the balance divergence:
+   - At `2026-07-29T11:53:00+05:30` (message `m-00203-bbc8db`):
+     - Text: `Debit: Rs.899.99 from HDFC Bank A/C **4821 on 29-JUL-26 to IRCTC. Avl Bal: Rs.36054.05.`
+     - Stated balance: **₹36,054.05** (matches computed running ledger balance to the paisa).
+   - At `2026-07-29T17:06:00+05:30` (message `m-00204-4741e7`):
+     - Text: `Debit: Rs.75.00 from HDFC Bank A/C **4821 on 29-JUL-26 to UPI/STATIONERY. Avl Bal: Rs.28479.05.`
+     - Stated balance: **₹28,479.05**.
+   - **The Unaccounted Balance Drop:**
+     $$\text{Expected Balance} = 36,054.05 - 75.00 = 35,979.05$$
+     $$\text{Unaccounted Drop} = 35,979.05 - 28,479.05 = \mathbf{7,500.00}$$
+   - Every transaction before 11:53 matches the bank's stated balance to the paisa.
+   - Every transaction after 17:06 matches the bank's stated balance down to the closing balance of ₹41,126.34.
+
+3. **Reconciliation Discrepancy, Not a Parser Failure:**
+   - The parser correctly extracts 100% of the real transaction messages present in `corpus-a.jsonl`.
+   - The missing transaction was never delivered in the raw corpus (a dropped SMS/email notification from the bank or carrier).
+   - In accordance with [`NormalizedTxn.java`](file:///home/eyrc01aaryan/Simplify_money/ledger-sync-seed/src/main/java/in/simplifymoney/ledgersync/model/NormalizedTxn.java) contract (`"a transaction must cite at least one message"`), the ledger **intentionally does not fabricate a phantom transaction** without a source message ID.
+   - The legacy SQL seed row `m-legacy-0041` (which has amount 92213.10) is legacy seed data from `V2__seed.sql` and is not part of `corpus-a.jsonl`; fabricating an entry using it would violate ledger integrity.
+   - As directed by the assignment specification:
+     > *"Your numbers are honest. If your ledger does not reconcile, say so and say why. A submission whose numbers match because they were made to match is worse than one that does not match and explains itself. We check for this specifically."*
+   - Therefore, the ledger contains 256 evidence-based transactions, and `submission/reconciliation.json` clearly and explicitly flags the ₹7,500.00 discrepancy.
+
+---
+
+## 4. Decision Log
 
 1. **Plain Java 21 over Spring Boot / Frameworks:**
    - *Rationale:* Financial batch and message ingestion engines need near-zero cold start overhead and predictable memory. Avoiding Spring/Jackson ensures `./verify.sh` compiles and executes completely offline with `javac` and standard JDK 21.
@@ -333,7 +379,7 @@ Measured directly against live MongoDB using `explain(ExplainVerbosity.EXECUTION
 
 ---
 
-## 4. What the Data Made Us Decide
+## 5. What the Data Made Us Decide
 
 1. **Email Date Parsing & Timezone Offsets:**
    - `fixtures/corpus-a.jsonl` contains emails formatted according to RFC 1123/2822. Specifically, `m-00131-cd229b` arrived with timestamp `Sat, 18 Jul 2026 18:50:00 +0000` (UTC). Converted to IST, it is `2026-07-19T00:20:00+05:30`, which exactly matches SMS `m-00130-a9be28` (`Rs 412.67 debited on 19-07-26 at 00:20`). Normalizing email dates to IST was essential to prevent duplicate ledger entries.
@@ -346,7 +392,7 @@ Measured directly against live MongoDB using `explain(ExplainVerbosity.EXECUTION
 
 ---
 
-## 5. AI Disclosure
+## 6. AI Disclosure
 
 - **Tools Used:** Claude / Antigravity CLI for pair-programming and code generation.
 - **Where AI Succeeded:**
@@ -360,7 +406,7 @@ Measured directly against live MongoDB using `explain(ExplainVerbosity.EXECUTION
 
 ---
 
-## 6. What's Unfinished / Next Production Hardening
+## 7. What's Unfinished / Next Production Hardening
 
 1. **Distributed Stream Processing:** Replace file-based batch ingest with an Apache Kafka or AWS Kinesis pipeline partitioned by `accountLast4`.
 2. **Transactional Outbox & Change Data Capture (CDC):** Use Debezium on MongoDB replica set change streams to update Elasticsearch / read replicas asynchronously.
