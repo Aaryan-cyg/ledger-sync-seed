@@ -19,10 +19,11 @@ public final class App {
 
     private static final Path DB = Path.of("data", "ledger");
     private static final Path MIGRATIONS = Path.of("db", "migration");
+    private static final Path DOCS = Path.of("data", "documents.json");
 
     public static void main(String[] args) throws Exception {
         if (args.length == 0) {
-            System.err.println("usage: migrate | ingest <corpus.jsonl> | report <out-dir>");
+            System.err.println("usage: migrate | ingest <corpus.jsonl> | report <out-dir> | backfill | check");
             System.exit(2);
         }
         Files.createDirectories(DB.getParent());
@@ -49,6 +50,7 @@ public final class App {
                 Path out = Path.of(args[1]);
                 Files.createDirectories(out);
                 try (SqlLedgerStore store = new SqlLedgerStore(DB)) {
+                    store.loadCheckpoints();
                     var ledger = store.all();
                     Files.writeString(out.resolve("ledger.json"),
                             Json.writePretty(Reports.ledgerDocument(ledger)));
@@ -57,6 +59,39 @@ public final class App {
                     Files.writeString(out.resolve("reconciliation.json"),
                             Json.writePretty(Reports.reconciliation(ledger)));
                     System.out.println("wrote 3 files to " + out);
+                }
+            }
+            case "backfill" -> {
+                try (SqlLedgerStore store = new SqlLedgerStore(DB)) {
+                    store.migrate(MIGRATIONS);
+                    in.simplifymoney.ledgersync.store.DocumentLedgerStore docStore = new in.simplifymoney.ledgersync.store.DocumentLedgerStore();
+                    docStore.loadFromFile(DOCS);
+                    in.simplifymoney.ledgersync.store.Backfill backfill = new in.simplifymoney.ledgersync.store.Backfill(store, docStore);
+                    in.simplifymoney.ledgersync.store.Backfill.Result result = backfill.run();
+                    docStore.saveToFile(DOCS);
+                    System.out.println("backfill: read=" + result.read() + ", written=" + result.written() + ", skipped=" + result.skipped());
+                    System.out.println("total document store records: " + docStore.totalDocuments());
+                }
+            }
+            case "check" -> {
+                try (SqlLedgerStore store = new SqlLedgerStore(DB)) {
+                    store.migrate(MIGRATIONS);
+                    in.simplifymoney.ledgersync.store.DocumentLedgerStore docStore = new in.simplifymoney.ledgersync.store.DocumentLedgerStore();
+                    if (Files.exists(DOCS)) {
+                        docStore.loadFromFile(DOCS);
+                    } else {
+                        new in.simplifymoney.ledgersync.store.Backfill(store, docStore).run();
+                    }
+                    in.simplifymoney.ledgersync.store.ConsistencyChecker checker = new in.simplifymoney.ledgersync.store.ConsistencyChecker(store, docStore);
+                    var divergences = checker.check();
+                    if (divergences.isEmpty()) {
+                        System.out.println("stores agree completely (0 divergences)");
+                    } else {
+                        System.out.println("found " + divergences.size() + " divergences:");
+                        for (var d : divergences) {
+                            System.out.println("  " + d.what() + " | sql=" + d.inSql() + " | doc=" + d.inDocuments());
+                        }
+                    }
                 }
             }
             default -> {

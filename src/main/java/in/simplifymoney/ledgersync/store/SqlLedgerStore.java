@@ -32,7 +32,7 @@ public final class SqlLedgerStore implements LedgerStore, AutoCloseable {
     public SqlLedgerStore(Path dbFile) {
         try {
             this.conn = DriverManager.getConnection(
-                    URL_PREFIX + dbFile.toAbsolutePath() + ";MODE=PostgreSQL", "sa", "");
+                    URL_PREFIX + dbFile.toAbsolutePath(), "sa", "");
         } catch (SQLException e) {
             throw new IllegalStateException(
                     "could not open the ledger database at " + dbFile
@@ -136,6 +136,34 @@ public final class SqlLedgerStore implements LedgerStore, AutoCloseable {
                     ? rs.getBigDecimal(1).setScale(2) : BigDecimal.ZERO.setScale(2);
         } catch (SQLException e) {
             throw new IllegalStateException("could not total the ledger", e);
+        }
+    }
+
+    public void saveCheckpoint(String accountLast4, OffsetDateTime occurredAt, BigDecimal balance, String messageId) {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "INSERT INTO balance_checkpoints(account_last4, occurred_at, balance, message_id) VALUES (?,?,?,?)")) {
+            ps.setString(1, accountLast4);
+            ps.setString(2, occurredAt.toString());
+            ps.setBigDecimal(3, balance);
+            ps.setString(4, messageId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not save checkpoint", e);
+        }
+    }
+
+    public void loadCheckpoints() {
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT account_last4, occurred_at, balance, message_id FROM balance_checkpoints")) {
+            while (rs.next()) {
+                in.simplifymoney.ledgersync.report.BalanceCheckpoints.record(
+                        rs.getString(1),
+                        OffsetDateTime.parse(rs.getString(2)),
+                        rs.getBigDecimal(3).setScale(2),
+                        rs.getString(4));
+            }
+        } catch (SQLException ignored) {
+            // Table might not exist yet before migration
         }
     }
 

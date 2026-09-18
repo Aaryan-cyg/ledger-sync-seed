@@ -54,6 +54,9 @@ public final class IngestService {
             parsedList.add(pt);
             if (pt.statedBalance() != null) {
                 BalanceCheckpoints.record(pt.accountLast4(), pt.occurredAt(), pt.statedBalance(), pt.sourceMessageId());
+                if (store instanceof in.simplifymoney.ledgersync.store.SqlLedgerStore sql) {
+                    sql.saveCheckpoint(pt.accountLast4(), pt.occurredAt(), pt.statedBalance(), pt.sourceMessageId());
+                }
             }
         }
 
